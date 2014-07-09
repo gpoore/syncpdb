@@ -222,22 +222,43 @@ class SPdb(pdb.Pdb):
             main_code_fname, main_doc_fname = [x.strip('"') for x in self._syncdb_pattern.match(data[0]).groups()[0:3:2]]
             self.main_code_fname = main_code_fname
             self.main_doc_fname = main_doc_fname
+            # If the main code file isn't being executed from its own 
+            # directory, then we will need to correct all code file paths 
+            # for this.
+            self.current_code_path, self.current_code_fname = os.path.split(sys.argv[0])
+            # Check to make sure syncdb is compatible. It could have been 
+            # copied under another name in an attempt to reuse it with 
+            # another, related script. But that doesn't work, at least 
+            # currently.
+            if self.current_code_fname != self.main_code_fname:
+                sys.exit('The synchonization file is only compatible with "{0}", not "{1}"'.format(self.main_code_fname, self.current_code_fname))
             for line in data[1:]:
                 code_fname, code_start_lineno, doc_fname, doc_start_lineno, input_length = self._syncdb_pattern.match(line).groups()
-                code_fname = code_fname.strip('"')
+                code_fname = os.path.normcase(code_fname.strip('"').replace('\\', '/'))
                 doc_fname = doc_fname.strip('"')
                 code_start_lineno = int(code_start_lineno)
                 doc_start_lineno = int(doc_start_lineno)
                 input_length = int(input_length)
+                code_fname_key = os.path.join(self.current_code_path, code_fname)
+                code_fname_key_full = os.path.normcase(os.path.abspath(code_fname_key))
+                is_main_code = code_fname == main_code_fname
+                is_main_doc = doc_fname == main_doc_fname
                 for n in range(0, input_length):
-                    self._code_to_doc_dict[code_fname][code_start_lineno + n] = Sync(doc_fname, doc_start_lineno + n)
-                    if code_fname == main_code_fname:
-                        self._code_to_doc_dict[''][code_start_lineno + n] = Sync(doc_fname, doc_start_lineno + n)
-                    self._doc_to_code_dict[doc_fname][doc_start_lineno + n] = Sync(code_fname, code_start_lineno + n)
-                    if doc_fname == main_doc_fname:
-                        self._doc_to_code_dict[''][doc_start_lineno + n] = Sync(code_fname, code_start_lineno + n)
+                    s = Sync(doc_fname, doc_start_lineno + n)
+                    self._code_to_doc_dict[code_fname_key][code_start_lineno + n] = s
+                    self._code_to_doc_dict[code_fname_key_full][code_start_lineno + n] = s
+                    if is_main_code:
+                        self._code_to_doc_dict[''][code_start_lineno + n] = s
+                    # When there are multiple sources of code in a 
+                    # single line of the document, we want to use the
+                    # first one
+                    if doc_start_lineno + n not in self._doc_to_code_dict[doc_fname]:
+                        s = Sync(code_fname_key, code_start_lineno + n)
+                        self._doc_to_code_dict[doc_fname][doc_start_lineno + n] = s
+                        if is_main_doc:
+                            self._doc_to_code_dict[''][doc_start_lineno + n] = s
         else:
-            sys.exit('Could not find {0}'.format(syncdb_fname))
+            sys.exit('Could not find synchronization file "{0}"'.format(syncdb_fname))
     
     def code_to_doc(self, code_fname, code_lineno):
         if code_fname in self._code_to_doc_dict:
